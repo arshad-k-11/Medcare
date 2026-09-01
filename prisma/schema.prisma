@@ -1,0 +1,1390 @@
+// Medcare — elder-care coordination platform
+//
+// Design notes
+//  * Status/type columns are String, not native DB enums. Ops must be able to add a lead
+//    status or incident type through the admin console without a migration, and it keeps
+//    the schema portable to SQLite for local demos (scripts/sqlite-demo.mjs).
+//    The allowed values live in src/lib/constants.ts and are enforced by zod at the API edge.
+//  * Money is stored as Int paise. Never floats.
+//  * Multi-value fields (languages, skills, pincodes) are stored as JSON strings for the
+//    same portability reason; helpers in src/lib/json-list.ts read/write them.
+//  * The patient (Senior) and the payer (FamilyProfile) are separate entities joined by
+//    SeniorFamilyLink, because in this business they are usually different people.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String  @id @default(cuid())
+  email        String? @unique
+  phone        String? @unique
+  passwordHash String?
+  name         String
+  role         String // ADMIN | OPS_MANAGER | NURSE | CAREGIVER | FAMILY | SENIOR | REFERRAL_PARTNER
+  status       String  @default("ACTIVE") // ACTIVE | INVITED | SUSPENDED | DISABLED
+  locale       String  @default("en-IN")
+  timezone     String  @default("Asia/Kolkata")
+
+  emailVerifiedAt DateTime?
+  phoneVerifiedAt DateTime?
+  lastLoginAt     DateTime?
+  failedLogins    Int       @default(0)
+  lockedUntil     DateTime?
+
+  // Accessibility preferences, honoured by the app shell.
+  textScale    String  @default("normal") // normal | large | xlarge
+  highContrast Boolean @default(false)
+  reduceMotion Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  familyProfile    FamilyProfile?
+  caregiverProfile CaregiverProfile?
+  nurseProfile     NurseProfile?
+  partnerProfile   PartnerProfile?
+  seniorAccount    Senior?           @relation("SeniorLogin")
+
+  sessions          Session[]
+  otpChallenges     OtpChallenge[]
+  passwordResets    PasswordReset[]
+  notifications     Notification[]
+  notifPreferences  NotificationPreference[]
+  auditLogs         AuditLog[]
+  sentMessages      Message[]                @relation("MessageSender")
+  threadMemberships MessageParticipant[]
+  ownedLeads        Lead[]                   @relation("LeadOwner")
+  leadActivities    LeadActivity[]
+  crmTasksAssigned  CrmTask[]                @relation("CrmTaskAssignee")
+  crmTasksCreated   CrmTask[]                @relation("CrmTaskCreator")
+  uploadedDocuments Document[]               @relation("DocumentUploader")
+  authoredNotes     CareNote[]               @relation("CareNoteAuthor")
+  recordedVitals    Vital[]                  @relation("VitalRecorder")
+  enteredMeds       Medication[]             @relation("MedicationEnteredBy")
+  reportedIncidents Incident[]               @relation("IncidentReporter")
+  raisedEscalations Escalation[]             @relation("EscalationRaiser")
+  givenFeedback     Feedback[]               @relation("FeedbackAuthor")
+
+  @@index([role, status])
+}
+
+/// Server-side session record so a logout or a compromise can revoke a live JWT.
+model Session {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userAgent     String?
+  ipHash        String?
+  createdAt     DateTime  @default(now())
+  lastSeenAt    DateTime  @default(now())
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  revokedReason String?
+
+  @@index([userId, revokedAt])
+}
+
+/// OTP codes are stored hashed; the plaintext only ever exists in the delivery payload.
+model OtpChallenge {
+  id          String    @id @default(cuid())
+  userId      String?
+  user        User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  destination String // phone number or email the code was sent to
+  channel     String    @default("SMS") // SMS | EMAIL | WHATSAPP
+  purpose     String // LOGIN | SIGNUP | VERIFY_PHONE
+  codeHash    String
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5)
+  consumedAt  DateTime?
+  expiresAt   DateTime
+  createdAt   DateTime  @default(now())
+
+  @@index([destination, purpose, expiresAt])
+}
+
+model PasswordReset {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// People
+// ---------------------------------------------------------------------------
+
+/// The decision-maker / payer. Often an adult child, frequently living abroad.
+model FamilyProfile {
+  id               String  @id @default(cuid())
+  userId           String  @unique
+  user             User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  relationship     String // SON | DAUGHTER | SPOUSE | RELATIVE | GUARDIAN | SELF | OTHER
+  city             String?
+  country          String  @default("India")
+  isNri            Boolean @default(false)
+  preferredChannel String  @default("PHONE") // PHONE | WHATSAPP | EMAIL | IN_APP
+  bestTimeToCall   String?
+  notes            String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  seniorLinks   SeniorFamilyLink[]
+  leads         Lead[]
+  invoices      Invoice[]
+  subscriptions Subscription[]
+  bookings      Booking[]
+
+  @@index([isNri])
+}
+
+/// The patient.
+model Senior {
+  id        String  @id @default(cuid())
+  firstName String
+  lastName  String
+  /// Login is optional — many seniors will never use the app themselves.
+  userId    String? @unique
+  user      User?   @relation("SeniorLogin", fields: [userId], references: [id])
+
+  dateOfBirth DateTime?
+  ageYears    Int?
+  gender      String? // FEMALE | MALE | OTHER | UNDISCLOSED
+
+  addressLine   String?
+  area          String // Mumbai locality, matched against ServiceArea
+  pincode       String?
+  serviceAreaId String?
+  serviceArea   ServiceArea? @relation(fields: [serviceAreaId], references: [id])
+
+  livingArrangement String? // ALONE | WITH_SPOUSE | WITH_FAMILY | WITH_ATTENDANT | ASSISTED_FACILITY
+  mobility          String? // INDEPENDENT | WALKING_AID | WHEELCHAIR | BEDRIDDEN
+  conditions        String  @default("[]") // JSON string array, free text entered by staff/family
+  allergies         String?
+  languages         String  @default("[]") // JSON string array
+  notes             String?
+
+  status String @default("PROSPECT") // PROSPECT | ASSESSMENT | ACTIVE | PAUSED | DISCHARGED | INACTIVE
+
+  emergencyContactName  String?
+  emergencyContactPhone String?
+  hospitalPreference    String?
+
+  consentCapturedAt DateTime?
+  consentCapturedBy String?
+
+  supervisingNurseId String?
+  supervisingNurse   NurseProfile? @relation(fields: [supervisingNurseId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  familyLinks     SeniorFamilyLink[]
+  assessments     Assessment[]
+  carePlans       CarePlan[]
+  assignments     CaregiverAssignment[]
+  visits          Visit[]
+  careNotes       CareNote[]
+  vitals          Vital[]
+  vitalThresholds VitalThreshold[]
+  medications     Medication[]
+  reminders       MedicationReminder[]
+  appointments    Appointment[]
+  incidents       Incident[]
+  escalations     Escalation[]
+  documents       Document[]
+  feedback        Feedback[]
+  invoices        Invoice[]
+  subscriptions   Subscription[]
+  bookings        Booking[]
+  leads           Lead[]
+  referrals       Referral[]
+  threads         MessageThread[]
+
+  @@index([status, area])
+  @@index([supervisingNurseId])
+}
+
+/// Patient ≠ payer. This join carries who decides, who pays, and who may see clinical detail.
+model SeniorFamilyLink {
+  id               String        @id @default(cuid())
+  seniorId         String
+  senior           Senior        @relation(fields: [seniorId], references: [id], onDelete: Cascade)
+  familyProfileId  String
+  familyProfile    FamilyProfile @relation(fields: [familyProfileId], references: [id], onDelete: Cascade)
+  relationship     String // relationship of the family member TO the senior
+  isPrimaryContact Boolean       @default(false)
+  isPrimaryPayer   Boolean       @default(false)
+  canViewClinical  Boolean       @default(true)
+  createdAt        DateTime      @default(now())
+
+  @@unique([seniorId, familyProfileId])
+  @@index([familyProfileId])
+}
+
+model CaregiverProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  employeeCode       String    @unique
+  gender             String?
+  /// UNVERIFIED until documents are actually checked. Never default to verified.
+  verificationStatus String    @default("UNVERIFIED") // UNVERIFIED | IN_PROGRESS | VERIFIED | REJECTED
+  verifiedAt         DateTime?
+  verifiedBy         String?
+
+  qualifications  String  @default("[]") // JSON string array
+  skills          String  @default("[]") // JSON string array, matched against Service.requiredSkills
+  languages       String  @default("[]") // JSON string array
+  preferredAreas  String  @default("[]") // JSON string array of ServiceArea names
+  experienceYears Int     @default(0)
+  bio             String?
+
+  status String @default("AVAILABLE") // AVAILABLE | ASSIGNED | ON_LEAVE | UNAVAILABLE | UNDER_REVIEW | INACTIVE
+
+  /// 0–100, maintained by ops from visit completion, punctuality and family feedback.
+  performanceScore      Int @default(70)
+  attendanceRate        Int @default(100)
+  maxConcurrentPatients Int @default(2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assignments     CaregiverAssignment[]
+  visits          Visit[]
+  availability    StaffAvailability[]
+  leaveRequests   LeaveRequest[]
+  documents       StaffDocument[]
+  trainingRecords TrainingRecord[]
+
+  @@index([status, verificationStatus])
+}
+
+model NurseProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  employeeCode           String    @unique
+  /// Nullable: recorded only once the registration certificate has been checked.
+  registrationNumber     String?
+  registrationVerifiedAt DateTime?
+  specialisations        String    @default("[]") // JSON string array
+  languages              String    @default("[]")
+  experienceYears        Int       @default(0)
+  caseloadCap            Int       @default(25)
+  isCareCoordinator      Boolean   @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  supervisedSeniors Senior[]
+  assessments       Assessment[]
+  authoredPlans     CarePlan[]
+  visits            Visit[]
+  documents         StaffDocument[]
+  leaveRequests     LeaveRequest[]
+
+  @@index([isCareCoordinator])
+}
+
+model PartnerProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  organisationName String
+  partnerType      String // HOSPITAL | DOCTOR | GERIATRICIAN | PHYSIOTHERAPIST | PHARMACY | DIAGNOSTIC_CENTRE | HOUSING_SOCIETY | COMMUNITY_ORG | OTHER
+  contactPerson    String?
+  designation      String?
+  addressLine      String?
+  area             String?
+  attributionCode  String  @unique
+  agreementStatus  String  @default("PENDING") // PENDING | ACTIVE | PAUSED
+  notes            String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  referrals Referral[]
+  leads     Lead[]
+
+  @@index([partnerType, agreementStatus])
+}
+
+model StaffDocument {
+  id          String            @id @default(cuid())
+  caregiverId String?
+  caregiver   CaregiverProfile? @relation(fields: [caregiverId], references: [id], onDelete: Cascade)
+  nurseId     String?
+  nurse       NurseProfile?     @relation(fields: [nurseId], references: [id], onDelete: Cascade)
+  category    String // ID_PROOF | ADDRESS_PROOF | QUALIFICATION | POLICE_VERIFICATION | MEDICAL_FITNESS | OTHER
+  label       String
+  storageKey  String
+  mimeType    String
+  sizeBytes   Int
+  verifiedAt  DateTime?
+  verifiedBy  String?
+  expiresAt   DateTime?
+  createdAt   DateTime          @default(now())
+
+  @@index([caregiverId])
+  @@index([nurseId])
+}
+
+model TrainingRecord {
+  id          String           @id @default(cuid())
+  caregiverId String
+  caregiver   CaregiverProfile @relation(fields: [caregiverId], references: [id], onDelete: Cascade)
+  courseName  String
+  completedAt DateTime
+  score       Int?
+  notes       String?
+  createdAt   DateTime         @default(now())
+
+  @@index([caregiverId])
+}
+
+// ---------------------------------------------------------------------------
+// Acquisition — leads, referrals, CRM
+// ---------------------------------------------------------------------------
+
+model LeadSource {
+  id        String  @id @default(cuid())
+  key       String  @unique // DOCTOR | HOSPITAL | WEBSITE | WHATSAPP | ...
+  label     String
+  category  String  @default("OTHER") // MEDICAL | DIGITAL | COMMUNITY | PARTNER | OTHER
+  isActive  Boolean @default(true)
+  sortOrder Int     @default(0)
+
+  leads Lead[]
+}
+
+model Lead {
+  id        String @id @default(cuid())
+  reference String @unique // human-quotable, e.g. MC-7F3K2P
+
+  status  String @default("NEW") // NEW | CONTACTED | QUALIFIED | ASSESSMENT_BOOKED | ASSESSMENT_COMPLETED | PROPOSAL_SENT | WON | LOST
+  urgency String @default("EXPLORING") // TODAY | WITHIN_24H | FEW_DAYS | WITHIN_WEEK | EXPLORING
+
+  // Contact snapshot — kept on the lead so an unconverted enquiry needs no account.
+  contactName      String
+  contactPhone     String
+  contactEmail     String?
+  relationship     String?
+  contactCity      String?
+  contactCountry   String?
+  preferredChannel String  @default("PHONE")
+
+  careNeedSummary String?
+  situations      String  @default("[]") // JSON string array of intake situation keys
+  area            String?
+  budgetBand      String? // UNDER_10K | 10K_25K | 25K_50K | ABOVE_50K | UNSURE
+  journey         String  @default("FAMILY_LOCAL") // FAMILY_LOCAL | NRI | PARTNER
+  utmSource       String?
+  utmCampaign     String?
+
+  sourceId String?
+  source   LeadSource? @relation(fields: [sourceId], references: [id])
+
+  familyProfileId String?
+  familyProfile   FamilyProfile?  @relation(fields: [familyProfileId], references: [id])
+  seniorId        String?
+  senior          Senior?         @relation(fields: [seniorId], references: [id])
+  partnerId       String?
+  partner         PartnerProfile? @relation(fields: [partnerId], references: [id])
+
+  recommendedPackageId String?
+  recommendedPackage   CarePackage? @relation(fields: [recommendedPackageId], references: [id])
+
+  ownerUserId String?
+  owner       User?   @relation("LeadOwner", fields: [ownerUserId], references: [id])
+
+  followUpAt DateTime?
+  lostReason String?
+  wonAt      DateTime?
+  notes      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  activities  LeadActivity[]
+  assessments Assessment[]
+  referral    Referral?
+  intake      IntakeSubmission?
+  crmTasks    CrmTask[]
+  bookings    Booking[]
+
+  @@index([status, createdAt])
+  @@index([ownerUserId, followUpAt])
+  @@index([journey])
+}
+
+model LeadActivity {
+  id          String   @id @default(cuid())
+  leadId      String
+  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  type        String // CALL | WHATSAPP | EMAIL | SMS | NOTE | STATUS_CHANGE | ASSESSMENT | SYSTEM
+  summary     String
+  outcome     String?
+  fromStatus  String?
+  toStatus    String?
+  actorUserId String?
+  actor       User?    @relation(fields: [actorUserId], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([leadId, createdAt])
+}
+
+/// Raw answers from the public funnel, retained for conversion analytics.
+model IntakeSubmission {
+  id                     String   @id @default(cuid())
+  leadId                 String?  @unique
+  lead                   Lead?    @relation(fields: [leadId], references: [id])
+  journey                String   @default("FAMILY_LOCAL")
+  answers                String // JSON blob of the 7-step wizard
+  recommendedPackageSlug String?
+  completedSteps         Int      @default(0)
+  submittedAt            DateTime @default(now())
+
+  @@index([journey, submittedAt])
+}
+
+model Referral {
+  id        String @id @default(cuid())
+  reference String @unique
+
+  partnerId String
+  partner   PartnerProfile @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  patientName        String
+  patientAgeYears    Int?
+  contactName        String
+  contactPhone       String
+  contactEmail       String?
+  patientArea        String
+  dischargeStatus    String? // PRE_DISCHARGE | DISCHARGED_TODAY | DISCHARGED_THIS_WEEK | NOT_APPLICABLE
+  dischargeDate      DateTime?
+  reason             String
+  requestedServiceId String?
+  requestedService   Service?  @relation(fields: [requestedServiceId], references: [id])
+  urgency            String    @default("FEW_DAYS")
+  consentConfirmed   Boolean   @default(false)
+  notes              String?
+
+  status      String    @default("SUBMITTED") // SUBMITTED | CONTACTED | ASSESSMENT | CONVERTED | DECLINED | LOST
+  contactedAt DateTime?
+  convertedAt DateTime?
+  statusNote  String?
+
+  leadId   String? @unique
+  lead     Lead?   @relation(fields: [leadId], references: [id])
+  seniorId String?
+  senior   Senior? @relation(fields: [seniorId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([partnerId, status])
+  @@index([status, createdAt])
+}
+
+model CrmTask {
+  id       String   @id @default(cuid())
+  title    String
+  details  String?
+  dueAt    DateTime
+  status   String   @default("OPEN") // OPEN | DONE | CANCELLED
+  priority String   @default("NORMAL") // LOW | NORMAL | HIGH
+
+  leadId String?
+  lead   Lead?   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  assigneeUserId  String
+  assignee        User   @relation("CrmTaskAssignee", fields: [assigneeUserId], references: [id])
+  createdByUserId String
+  createdBy       User   @relation("CrmTaskCreator", fields: [createdByUserId], references: [id])
+
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([assigneeUserId, status, dueAt])
+}
+
+// ---------------------------------------------------------------------------
+// Catalogue — configurable services, packages, areas, task templates
+// ---------------------------------------------------------------------------
+
+model ServiceArea {
+  id        String  @id @default(cuid())
+  name      String  @unique
+  zone      String  @default("MUMBAI") // MUMBAI | THANE | NAVI_MUMBAI
+  pincodes  String  @default("[]") // JSON string array
+  isActive  Boolean @default(true)
+  notes     String?
+  sortOrder Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  seniors Senior[]
+}
+
+model Service {
+  id             String  @id @default(cuid())
+  slug           String  @unique
+  name           String
+  category       String // ASSESSMENT | ATTENDANT | NURSING | COORDINATION | MONITORING | COMPANION
+  /// NON_MEDICAL vs NURSING matters legally and is surfaced in the UI.
+  serviceClass   String  @default("NON_MEDICAL") // NON_MEDICAL | NURSING | COORDINATION
+  description    String
+  unit           String  @default("VISIT") // VISIT | HOUR | SHIFT | MONTH | ONE_TIME
+  /// Indicative only, in paise. Ops maintains this; the UI shows "starting from".
+  basePricePaise Int     @default(0)
+  requiredSkills String  @default("[]") // JSON string array
+  isActive       Boolean @default(true)
+  sortOrder      Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  packageServices  PackageService[]
+  carePlanServices CarePlanService[]
+  referrals        Referral[]
+}
+
+model CarePackage {
+  id       String @id @default(cuid())
+  slug     String @unique
+  name     String
+  tagline  String
+  audience String // POST_DISCHARGE | CHRONIC | NRI | SAFETY | COMPANION
+  summary  String
+  /// Long-form description in markdown-ish plain text, rendered as paragraphs.
+  details  String
+
+  durationLabel  String // "14 days", "Monthly", "One-time visit"
+  billingCycle   String @default("ONE_TIME") // ONE_TIME | MONTHLY
+  /// Indicative starting price in paise. 0 => show "Talk to us for a personalised plan".
+  priceFromPaise Int    @default(0)
+
+  isPublished  Boolean @default(true)
+  isComingSoon Boolean @default(false)
+  isFeatured   Boolean @default(false)
+  sortOrder    Int     @default(0)
+
+  outcomes    String @default("[]") // JSON string array — what the family gets
+  notIncluded String @default("[]") // JSON string array — explicit scope limits
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  services      PackageService[]
+  carePlans     CarePlan[]
+  bookings      Booking[]
+  subscriptions Subscription[]
+  leads         Lead[]
+}
+
+model PackageService {
+  id        String      @id @default(cuid())
+  packageId String
+  package   CarePackage @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  serviceId String
+  service   Service     @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  quantity  Int         @default(1)
+  frequency String      @default("AS_NEEDED") // DAILY | ALTERNATE_DAYS | WEEKLY | FORTNIGHTLY | MONTHLY | ONE_TIME | AS_NEEDED
+  notes     String?
+  sortOrder Int         @default(0)
+
+  @@unique([packageId, serviceId])
+}
+
+model TaskTemplate {
+  id           String  @id @default(cuid())
+  key          String  @unique
+  label        String
+  category     String // MOBILITY | MEALS | MEDICATION | HYGIENE | COMPANION | HOUSEHOLD | APPOINTMENT | MONITORING
+  /// Non-medical by default. Tasks a caregiver may not perform are simply not in the catalogue.
+  instructions String?
+  isActive     Boolean @default(true)
+  sortOrder    Int     @default(0)
+
+  visitTasks VisitTask[]
+}
+
+model AssessmentQuestion {
+  id         String  @id @default(cuid())
+  key        String  @unique
+  section    String // HOME_SAFETY | MOBILITY | MEDICATION | NUTRITION | COGNITION | SUPPORT | GOALS
+  prompt     String
+  inputType  String  @default("TEXT") // TEXT | SINGLE_CHOICE | MULTI_CHOICE | SCALE | BOOLEAN
+  options    String  @default("[]") // JSON string array
+  isRequired Boolean @default(false)
+  isActive   Boolean @default(true)
+  sortOrder  Int     @default(0)
+
+  answers AssessmentAnswer[]
+}
+
+model EscalationRule {
+  id            String  @id @default(cuid())
+  key           String  @unique
+  trigger       String // INCIDENT_HIGH | INCIDENT_MEDIUM | VITAL_REVIEW | MISSED_VISIT | CAREGIVER_UNAVAILABLE | SENIOR_HELP_REQUEST
+  notifyLevel   String // NURSE | OPS | FAMILY | EMERGENCY_SERVICES
+  notifyFamily  Boolean @default(false)
+  withinMinutes Int     @default(60)
+  instructions  String
+  isActive      Boolean @default(true)
+  sortOrder     Int     @default(0)
+}
+
+model NotificationTemplate {
+  id          String  @id @default(cuid())
+  key         String  @unique
+  channel     String // IN_APP | EMAIL | SMS | WHATSAPP
+  subject     String?
+  body        String // supports {{token}} interpolation
+  isActive    Boolean @default(true)
+  description String?
+}
+
+model AppSetting {
+  key       String   @id
+  value     String // JSON
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Care delivery
+// ---------------------------------------------------------------------------
+
+model Assessment {
+  id       String  @id @default(cuid())
+  seniorId String
+  senior   Senior  @relation(fields: [seniorId], references: [id], onDelete: Cascade)
+  leadId   String?
+  lead     Lead?   @relation(fields: [leadId], references: [id])
+
+  type   String @default("HOME_VISIT") // HOME_VISIT | TELE | REASSESSMENT
+  status String @default("REQUESTED") // REQUESTED | SCHEDULED | COMPLETED | CANCELLED | NO_SHOW
+
+  requestedFor DateTime?
+  scheduledAt  DateTime?
+  completedAt  DateTime?
+
+  nurseId String?
+  nurse   NurseProfile? @relation(fields: [nurseId], references: [id])
+
+  /// Free-text professional summary; structured findings live in AssessmentAnswer.
+  summary                String?
+  riskFlags              String  @default("[]") // JSON string array, e.g. FALL_RISK, MEDICATION_COMPLEXITY
+  recommendedPackageSlug String?
+  followUpNotes          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  answers   AssessmentAnswer[]
+  carePlans CarePlan[]
+  visits    Visit[]
+
+  @@index([status, scheduledAt])
+  @@index([seniorId])
+}
+
+model AssessmentAnswer {
+  id           String             @id @default(cuid())
+  assessmentId String
+  assessment   Assessment         @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  questionId   String
+  question     AssessmentQuestion @relation(fields: [questionId], references: [id])
+  value        String
+  notes        String?
+
+  @@unique([assessmentId, questionId])
+}
+
+model CarePlan {
+  id       String @id @default(cuid())
+  seniorId String
+  senior   Senior @relation(fields: [seniorId], references: [id], onDelete: Cascade)
+
+  assessmentId String?
+  assessment   Assessment?  @relation(fields: [assessmentId], references: [id])
+  packageId    String?
+  package      CarePackage? @relation(fields: [packageId], references: [id])
+
+  title   String
+  version Int    @default(1)
+  status  String @default("DRAFT") // DRAFT | ACTIVE | UNDER_REVIEW | SUPERSEDED | CLOSED
+
+  primaryGoals          String  @default("[]") // JSON string array
+  careRequirements      String  @default("[]") // JSON string array
+  scheduleSummary       String?
+  mobilityNotes         String?
+  dietaryNotes          String?
+  familyPreferences     String?
+  escalationPreferences String?
+
+  startDate  DateTime?
+  reviewDate DateTime?
+
+  authoredByNurseId String?
+  authoredByNurse   NurseProfile? @relation(fields: [authoredByNurseId], references: [id])
+  approvedAt        DateTime?
+  approvedBy        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  services CarePlanService[]
+  versions CarePlanVersion[]
+  visits   Visit[]
+
+  @@index([seniorId, status])
+}
+
+/// Immutable snapshot of a plan revision, so a family can see what changed and when.
+model CarePlanVersion {
+  id         String   @id @default(cuid())
+  carePlanId String
+  carePlan   CarePlan @relation(fields: [carePlanId], references: [id], onDelete: Cascade)
+  version    Int
+  snapshot   String // JSON of the plan at this version
+  changeNote String?
+  createdBy  String?
+  createdAt  DateTime @default(now())
+
+  @@unique([carePlanId, version])
+}
+
+model CarePlanService {
+  id              String   @id @default(cuid())
+  carePlanId      String
+  carePlan        CarePlan @relation(fields: [carePlanId], references: [id], onDelete: Cascade)
+  serviceId       String
+  service         Service  @relation(fields: [serviceId], references: [id])
+  frequency       String   @default("WEEKLY")
+  quantity        Int      @default(1)
+  durationMinutes Int?
+  notes           String?
+
+  @@unique([carePlanId, serviceId])
+}
+
+model CaregiverAssignment {
+  id          String           @id @default(cuid())
+  seniorId    String
+  senior      Senior           @relation(fields: [seniorId], references: [id], onDelete: Cascade)
+  caregiverId String
+  caregiver   CaregiverProfile @relation(fields: [caregiverId], references: [id])
+
+  role         String  @default("PRIMARY") // PRIMARY | BACKUP | REPLACEMENT
+  shiftPattern String  @default("DAY") // MORNING | DAY | EVENING | NIGHT | LIVE_IN | VISITS
+  shiftStart   String? // "09:00"
+  shiftEnd     String? // "17:00"
+  daysOfWeek   String  @default("[]") // JSON string array of 0–6
+
+  status    String    @default("ACTIVE") // PROPOSED | ACTIVE | NEEDS_REPLACEMENT | ENDED
+  startDate DateTime  @default(now())
+  endDate   DateTime?
+
+  replacedAssignmentId String?              @unique
+  replacedAssignment   CaregiverAssignment? @relation("Replacement", fields: [replacedAssignmentId], references: [id])
+  replacementFor       CaregiverAssignment? @relation("Replacement")
+  replacementReason    String?
+  matchScore           Int?
+  matchExplanation     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  visits Visit[]
+
+  @@index([seniorId, status])
+  @@index([caregiverId, status])
+}
+
+model StaffAvailability {
+  id          String           @id @default(cuid())
+  caregiverId String
+  caregiver   CaregiverProfile @relation(fields: [caregiverId], references: [id], onDelete: Cascade)
+  dayOfWeek   Int // 0 = Sunday
+  startTime   String // "08:00"
+  endTime     String // "18:00"
+  isAvailable Boolean          @default(true)
+
+  @@unique([caregiverId, dayOfWeek, startTime])
+}
+
+model LeaveRequest {
+  id           String            @id @default(cuid())
+  caregiverId  String?
+  caregiver    CaregiverProfile? @relation(fields: [caregiverId], references: [id], onDelete: Cascade)
+  nurseId      String?
+  nurse        NurseProfile?     @relation(fields: [nurseId], references: [id], onDelete: Cascade)
+  fromDate     DateTime
+  toDate       DateTime
+  reason       String
+  type         String            @default("PLANNED") // PLANNED | SICK | EMERGENCY
+  status       String            @default("PENDING") // PENDING | APPROVED | REJECTED | WITHDRAWN
+  decidedAt    DateTime?
+  decidedBy    String?
+  decisionNote String?
+  createdAt    DateTime          @default(now())
+
+  @@index([caregiverId, status])
+}
+
+model Visit {
+  id       String @id @default(cuid())
+  seniorId String
+  senior   Senior @relation(fields: [seniorId], references: [id], onDelete: Cascade)
+
+  kind String @default("CAREGIVER_SHIFT") // CAREGIVER_SHIFT | NURSE_REVIEW | ASSESSMENT
+
+  caregiverId  String?
+  caregiver    CaregiverProfile?    @relation(fields: [caregiverId], references: [id])
+  nurseId      String?
+  nurse        NurseProfile?        @relation(fields: [nurseId], references: [id])
+  assignmentId String?
+  assignment   CaregiverAssignment? @relation(fields: [assignmentId], references: [id])
+  carePlanId   String?
+  carePlan     CarePlan?            @relation(fields: [carePlanId], references: [id])
+  assessmentId String?
+  assessment   Assessment?          @relation(fields: [assessmentId], references: [id])
+
+  scheduledStart   DateTime
+  scheduledEnd     DateTime
+  checkInAt        DateTime?
+  checkOutAt       DateTime?
+  checkInLat       Float?
+  checkInLng       Float?
+  checkInAccuracyM Int?
+  locationVerified Boolean   @default(false)
+
+  status String  @default("SCHEDULED") // SCHEDULED | IN_PROGRESS | COMPLETED | MISSED | CANCELLED
+  atRisk Boolean @default(false)
+
+  instructions String?
+  summary      String?
+  cancelReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tasks     VisitTask[]
+  notes     CareNote[]
+  vitals    Vital[]
+  incidents Incident[]
+
+  @@index([seniorId, scheduledStart])
+  @@index([caregiverId, scheduledStart])
+  @@index([status, scheduledStart])
+}
+
+model VisitTask {
+  id           String        @id @default(cuid())
+  visitId      String
+  visit        Visit         @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  templateId   String?
+  template     TaskTemplate? @relation(fields: [templateId], references: [id])
+  label        String
+  instructions String?
+  status       String        @default("PENDING") // PENDING | DONE | REFUSED | NOT_APPLICABLE
+  completedAt  DateTime?
+  note         String?
+  sortOrder    Int           @default(0)
+
+  @@index([visitId])
+}
+
+model CareNote {
+  id       String  @id @default(cuid())
+  seniorId String
+  senior   Senior  @relation(fields: [seniorId], references: [id], onDelete: Cascade)
+  visitId  String?
+  visit    Visit?  @relation(fields: [visitId], references: [id])
+
+  authorUserId String
+  author       User   @relation("CareNoteAuthor", fields: [authorUserId], references: [id])
+  authorRole   String
+
+  type            String // DAILY | CONCERN | INCIDENT | REFUSAL | MISSED_TASK | FAMILY_COMMUNICATION | NURSE_REVIEW | CARE_PLAN_CHANGE
+  body            String
+  /// Families see a curated subset; internal clinical discussion stays internal.
+  visibleToFamily Boolean   @default(true)
+  requiresReview  Boolean   @default(false)
+  reviewedAt      DateTime?
+  reviewedBy      String?
+
+  createdAt DateTime @default(now())
+
+  @@index([seniorId, createdAt])
+  @@index([requiresReview, reviewedAt])
+}
+
+model Vital {
+  id       String  @id @default(cuid())
+  seniorId String
+  senior   Senior  @relation(fields: [seniorId], references: [id], onDelete: Cascade)
+  visitId  String?
+  visit    Visit?  @relation(fields: [visitId], references: [id])
+
+  type           String // BLOOD_PRESSURE | HEART_RATE | TEMPERATURE | BLOOD_GLUCOSE | SPO2 | WEIGHT
+  /// Primary reading. Blood pressure uses valueNumber = systolic, valueSecondary = diastolic.
+  valueNumber    Float
+  valueSecondary Float?
+  unit           String
+  context        String? // FASTING | POST_MEAL | RESTING | POST_ACTIVITY
+
+  measuredAt       DateTime
+  recordedByUserId String
+  recordedBy       User     @relation("VitalRecorder", fields: [recordedByUserId], references: [id])
+
+  /// NORMAL | REQUIRES_REVIEW — a threshold breach is never labelled a diagnosis.
+  flag       String    @default("NORMAL")
+  note       String?
+  reviewedAt DateTime?
+  reviewedBy String?
+
+  createdAt DateTime @default(now())
+
+  @@index([seniorId, type, measuredAt])
+  @@index([flag, reviewedAt])
+}
+
+/// Configurable review bands. Global rows have seniorId = null.
+model VitalThreshold {
+  id            String  @id @default(cuid())
+  seniorId      String?
+  senior        Senior? @relation(fields: [seniorId], references: [id], onDelete: Cascade)
+  type          String
+  lowValue      Float?
+  highValue     Float?
+  lowSecondary  Float?
+  highSecondary Float?
+  note          String?
+  isActive      Boolean @default(true)
+
+  @@unique([seniorId, type])
+}
+
+/// The platform records medication that an authorised person entered. It does not prescribe.
+model Medication {
+  id       String @id @default(cuid())
+  seniorId String
+  senior   Senior @relation(fields: [seniorId], references: [id], onDelete: Cascade)
+
+  name         String
+  dose         String
+  form         String? // TABLET | CAPSULE | SYRUP | INJECTION | INHALER | DROPS | OTHER
+  /// JSON string array of "HH:mm" slots.
+  timings      String    @default("[]")
+  instructions String?
+  prescribedBy String? // recorded for reference only
+  startDate    DateTime
+  endDate      DateTime?
+  isActive     Boolean   @default(true)
+
+  enteredByUserId  String
+  enteredBy        User    @relation("MedicationEnteredBy", fields: [enteredByUserId], references: [id])
+  sourceDocumentId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  reminders MedicationReminder[]
+
+  @@index([seniorId, isActive])
+}
+
+model MedicationReminder {
+  id           String     @id @default(cuid())
+  medicationId String
+  medication   Medication @relation(fields: [medicationId], references: [id], onDelete: Cascade)
+  seniorId     String
+  senior       Senior     @relation(fields: [seniorId], references: [id], onDelete: Cascade)
+
+  dueAt         DateTime
+  status        String    @default("PENDING") // PENDING | CONFIRMED | MISSED | SKIPPED
+  actedAt       DateTime?
+  actedByUserId String?
+  note          String?
+
+  createdAt DateTime @default(now())
+
+  @@index([seniorId, dueAt, status])
+}
+
+model Appointment {
+  id       String @id @default(cuid())
+  seniorId String
+  senior   Senior @relation(fields: [seniorId], references: [id], onDelete: Cascade)
+
+  title           String
+  doctorName      String?
+  facility        String?
+  specialty       String?
+  scheduledAt     DateTime
+  durationMinutes Int      @default(60)
+  purpose         String?
+
+  transportRequired    Boolean @default(false)
+  companionRequired    Boolean @default(false)
+  companionCaregiverId String?
+
+  reminderAt   DateTime?
+  status       String    @default("SCHEDULED") // SCHEDULED | COMPLETED | CANCELLED | MISSED | RESCHEDULED
+  outcomeNotes String?
+
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([seniorId, scheduledAt])
+  @@index([status, scheduledAt])
+}
+
+model Incident {
+  id        String  @id @default(cuid())
+  reference String  @unique
+  seniorId  String
+  senior    Senior  @relation(fields: [seniorId], references: [id], onDelete: Cascade)
+  visitId   String?
+  visit     Visit?  @relation(fields: [visitId], references: [id])
+
+  type        String // FALL | REFUSED_CARE | MEDICATION_MISSED | HEALTH_CONCERN | EQUIPMENT | SAFETY | CAREGIVER_UNAVAILABLE | FAMILY_COMPLAINT | OTHER
+  severity    String @default("LOW") // LOW | MEDIUM | HIGH
+  title       String
+  description String
+
+  reportedByUserId String
+  reportedBy       User     @relation("IncidentReporter", fields: [reportedByUserId], references: [id])
+  reportedAt       DateTime @default(now())
+
+  status              String    @default("OPEN") // OPEN | UNDER_REVIEW | ACTION_TAKEN | RESOLVED | CLOSED
+  severityConfirmedBy String?
+  familyNotifiedAt    DateTime?
+  actionsTaken        String?
+  resolution          String?
+  resolvedAt          DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  escalations Escalation[]
+
+  @@index([status, severity])
+  @@index([seniorId, reportedAt])
+}
+
+model Escalation {
+  id         String    @id @default(cuid())
+  seniorId   String
+  senior     Senior    @relation(fields: [seniorId], references: [id], onDelete: Cascade)
+  incidentId String?
+  incident   Incident? @relation(fields: [incidentId], references: [id])
+
+  trigger String // matches EscalationRule.trigger
+  level   String // NURSE | OPS | FAMILY | EMERGENCY_SERVICES
+  reason  String
+
+  raisedByUserId String
+  raisedBy       User     @relation("EscalationRaiser", fields: [raisedByUserId], references: [id])
+  raisedAt       DateTime @default(now())
+
+  acknowledgedAt DateTime?
+  acknowledgedBy String?
+  closedAt       DateTime?
+  closureNote    String?
+
+  @@index([seniorId, raisedAt])
+  @@index([level, closedAt])
+}
+
+model Document {
+  id       String @id @default(cuid())
+  seniorId String
+  senior   Senior @relation(fields: [seniorId], references: [id], onDelete: Cascade)
+
+  category     String // DISCHARGE_SUMMARY | PRESCRIPTION | LAB_REPORT | ID_PROOF | CARE_PLAN | INVOICE | OTHER
+  label        String
+  storageKey   String
+  mimeType     String
+  sizeBytes    Int
+  /// Documents nobody but ops/nurse should open (e.g. an internal review) are restricted.
+  isRestricted Boolean @default(false)
+
+  uploadedByUserId String
+  uploadedBy       User      @relation("DocumentUploader", fields: [uploadedByUserId], references: [id])
+  uploadedAt       DateTime  @default(now())
+  archivedAt       DateTime?
+  lastAccessedAt   DateTime?
+
+  @@index([seniorId, category])
+}
+
+model Feedback {
+  id           String  @id @default(cuid())
+  seniorId     String?
+  senior       Senior? @relation(fields: [seniorId], references: [id])
+  authorUserId String
+  author       User    @relation("FeedbackAuthor", fields: [authorUserId], references: [id])
+
+  type           String  @default("RATING") // RATING | COMPLAINT | CALLBACK_REQUEST | SUGGESTION
+  rating         Int?
+  subject        String?
+  comment        String?
+  relatedVisitId String?
+
+  status     String    @default("OPEN") // OPEN | IN_PROGRESS | RESOLVED | CLOSED
+  resolution String?
+  resolvedAt DateTime?
+  resolvedBy String?
+
+  createdAt DateTime @default(now())
+
+  @@index([type, status])
+  @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Communication
+// ---------------------------------------------------------------------------
+
+model MessageThread {
+  id            String   @id @default(cuid())
+  subject       String
+  seniorId      String?
+  senior        Senior?  @relation(fields: [seniorId], references: [id])
+  category      String   @default("GENERAL") // GENERAL | CARE | BILLING | COMPLAINT | PARTNER
+  status        String   @default("OPEN") // OPEN | CLOSED
+  lastMessageAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  participants MessageParticipant[]
+  messages     Message[]
+
+  @@index([lastMessageAt])
+}
+
+model MessageParticipant {
+  id         String        @id @default(cuid())
+  threadId   String
+  thread     MessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lastReadAt DateTime?
+
+  @@unique([threadId, userId])
+}
+
+model Message {
+  id              String        @id @default(cuid())
+  threadId        String
+  thread          MessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  senderUserId    String
+  sender          User          @relation("MessageSender", fields: [senderUserId], references: [id])
+  body            String
+  /// Which outbound channel this was mirrored to, if any.
+  mirroredChannel String?
+  createdAt       DateTime      @default(now())
+
+  @@index([threadId, createdAt])
+}
+
+model Notification {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type     String // VISIT_UPDATE | CAREGIVER_ASSIGNED | APPOINTMENT_REMINDER | PAYMENT_REMINDER | INCIDENT_ALERT | CARE_REPORT | CARE_PLAN_UPDATE | LEAD_NEW | REVIEW_REQUIRED | SYSTEM
+  title    String
+  body     String
+  channel  String  @default("IN_APP") // IN_APP | EMAIL | SMS | WHATSAPP
+  severity String  @default("INFO") // INFO | WARNING | CRITICAL
+  href     String?
+  seniorId String?
+
+  sentAt         DateTime?
+  readAt         DateTime?
+  /// Populated when an adapter is disabled or a provider rejects the send.
+  deliveryStatus String    @default("QUEUED") // QUEUED | SENT | SKIPPED | FAILED
+  deliveryNote   String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, readAt])
+  @@index([type, createdAt])
+}
+
+model NotificationPreference {
+  id      String  @id @default(cuid())
+  userId  String
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type    String
+  channel String
+  enabled Boolean @default(true)
+
+  @@unique([userId, type, channel])
+}
+
+// ---------------------------------------------------------------------------
+// Money
+// ---------------------------------------------------------------------------
+
+model Booking {
+  id              String        @id @default(cuid())
+  reference       String        @unique
+  familyProfileId String
+  familyProfile   FamilyProfile @relation(fields: [familyProfileId], references: [id])
+  seniorId        String
+  senior          Senior        @relation(fields: [seniorId], references: [id])
+  packageId       String
+  package         CarePackage   @relation(fields: [packageId], references: [id])
+  leadId          String?
+  lead            Lead?         @relation(fields: [leadId], references: [id])
+
+  status            String    @default("PENDING") // PENDING | CONFIRMED | ACTIVE | COMPLETED | CANCELLED
+  startDate         DateTime?
+  notes             String?
+  quotedAmountPaise Int       @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  invoices     Invoice[]
+  subscription Subscription?
+
+  @@index([status, createdAt])
+}
+
+model Subscription {
+  id              String        @id @default(cuid())
+  familyProfileId String
+  familyProfile   FamilyProfile @relation(fields: [familyProfileId], references: [id])
+  seniorId        String
+  senior          Senior        @relation(fields: [seniorId], references: [id])
+  packageId       String
+  package         CarePackage   @relation(fields: [packageId], references: [id])
+  bookingId       String?       @unique
+  booking         Booking?      @relation(fields: [bookingId], references: [id])
+
+  status          String    @default("ACTIVE") // ACTIVE | PAST_DUE | PAUSED | CANCELLED
+  amountPaise     Int
+  billingCycle    String    @default("MONTHLY")
+  startDate       DateTime
+  nextBillingDate DateTime?
+  cancelledAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  invoices Invoice[]
+
+  @@index([status, nextBillingDate])
+}
+
+model Invoice {
+  id     String @id @default(cuid())
+  number String @unique
+
+  familyProfileId String
+  familyProfile   FamilyProfile @relation(fields: [familyProfileId], references: [id])
+  seniorId        String?
+  senior          Senior?       @relation(fields: [seniorId], references: [id])
+  bookingId       String?
+  booking         Booking?      @relation(fields: [bookingId], references: [id])
+  subscriptionId  String?
+  subscription    Subscription? @relation(fields: [subscriptionId], references: [id])
+
+  /// JSON array of { label, quantity, unitPricePaise, amountPaise }
+  items           String @default("[]")
+  subtotalPaise   Int
+  taxPaise        Int    @default(0)
+  discountPaise   Int    @default(0)
+  totalPaise      Int
+  amountPaidPaise Int    @default(0)
+  currency        String @default("INR")
+
+  status   String    @default("DRAFT") // DRAFT | SENT | PAID | PARTIAL | OVERDUE | VOID
+  issuedAt DateTime?
+  dueDate  DateTime?
+  paidAt   DateTime?
+  notes    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payments Payment[]
+
+  @@index([status, dueDate])
+  @@index([familyProfileId, createdAt])
+}
+
+model Payment {
+  id        String  @id @default(cuid())
+  invoiceId String
+  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  gateway          String  @default("RAZORPAY")
+  gatewayOrderId   String? @unique
+  gatewayPaymentId String? @unique
+  gatewaySignature String?
+
+  amountPaise Int
+  currency    String  @default("INR")
+  method      String? // UPI | CARD | NETBANKING | WALLET | CASH | BANK_TRANSFER
+  status      String  @default("CREATED") // CREATED | AUTHORISED | CAPTURED | FAILED | REFUNDED | PARTIALLY_REFUNDED
+
+  refundStatus      String? // REQUESTED | PROCESSED | REJECTED
+  refundAmountPaise Int     @default(0)
+  refundReason      String?
+  failureReason     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Audit
+// ---------------------------------------------------------------------------
+
+/// Records that something happened and to which record — never the sensitive value itself.
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  actor       User?    @relation(fields: [actorUserId], references: [id])
+  actorRole   String?
+  action      String // e.g. auth.login, patient.read, vital.create, assignment.replaced
+  entity      String
+  entityId    String?
+  seniorId    String?
+  outcome     String   @default("SUCCESS") // SUCCESS | DENIED | FAILURE
+  ipHash      String?
+  userAgent   String?
+  metadata    String? // JSON, redacted of PHI values
+  createdAt   DateTime @default(now())
+
+  @@index([entity, entityId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([action, createdAt])
+}

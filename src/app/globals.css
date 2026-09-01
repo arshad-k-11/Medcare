@@ -1,0 +1,212 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------------------------------------------------------------------------
+   Design tokens.
+
+   Colour, type scale and spacing live in tailwind.config.ts. What lives here are
+   the values that a *user* can change at runtime: text scale, contrast and motion.
+   They are driven by data- attributes on <html>, set server-side from the user's
+   stored preference so there is no flash of the wrong size on first paint.
+   --------------------------------------------------------------------------- */
+
+:root {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue',
+    Arial, sans-serif;
+  --font-display: Georgia, 'Times New Roman', serif;
+
+  /* Base font size. Everything is sized in rem, so changing this scales the app. */
+  --app-font-size: 16px;
+
+  /* Minimum interactive target. Raised on senior and caregiver surfaces. */
+  --tap-target: 44px;
+
+  --focus-ring: #0f7d73;
+  --page-bg: #fbf9f5;
+  --surface: #ffffff;
+  --border: #e7e2d7;
+  --text: #1f242c;
+  --text-muted: #505b6b;
+}
+
+html[data-text-scale='large'] {
+  --app-font-size: 18px;
+}
+
+html[data-text-scale='xlarge'] {
+  --app-font-size: 21px;
+}
+
+/* Senior-facing surfaces start larger and with bigger targets by default. */
+html[data-surface='senior'] {
+  --app-font-size: 20px;
+  --tap-target: 56px;
+}
+
+html[data-surface='caregiver'] {
+  --tap-target: 52px;
+}
+
+/* High contrast: stronger borders, pure-white surfaces, darker text, no soft shadows.
+   Deliberately not a "dark mode" — it exists for legibility, not aesthetics. */
+html[data-contrast='high'] {
+  --page-bg: #ffffff;
+  --surface: #ffffff;
+  --border: #1f242c;
+  --text: #000000;
+  --text-muted: #22262d;
+  --focus-ring: #00332f;
+}
+
+html[data-contrast='high'] .shadow-soft,
+html[data-contrast='high'] .shadow-lift {
+  box-shadow: none !important;
+}
+
+html[data-contrast='high'] [class*='border'] {
+  border-color: var(--border);
+}
+
+html {
+  font-size: var(--app-font-size);
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--page-bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ---------------------------------------------------------------------------
+   Focus. A visible focus ring is non-negotiable on a product older adults and
+   keyboard users rely on, so it is defined once here rather than per component.
+   --------------------------------------------------------------------------- */
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Remove the ring for pointer users who click, keep it for keyboard users. */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* ---------------------------------------------------------------------------
+   Motion. Respect the OS setting and the in-app toggle equally.
+   --------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+html[data-motion='reduced'] *,
+html[data-motion='reduced'] *::before,
+html[data-motion='reduced'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* ---------------------------------------------------------------------------
+   Utilities
+   --------------------------------------------------------------------------- */
+
+@layer components {
+  /* Skip link — visible only once focused. */
+  .skip-link {
+    @apply absolute left-4 z-50 -translate-y-20 rounded-md bg-brand-700 px-4 py-3 text-sm font-semibold text-white transition-transform focus:translate-y-4;
+  }
+
+  .display-title {
+    font-family: var(--font-display);
+    @apply font-normal tracking-tight;
+  }
+
+  /* Section rhythm used across the marketing site. */
+  .section {
+    @apply px-5 py-14 sm:px-8 sm:py-20 lg:py-28;
+  }
+
+  .container-page {
+    @apply mx-auto w-full max-w-6xl;
+  }
+
+  .container-wide {
+    @apply mx-auto w-full max-w-7xl;
+  }
+
+  .prose-care {
+    @apply max-w-prose text-[1.0625rem] leading-relaxed text-ink-700;
+  }
+
+  .prose-care p + p {
+    @apply mt-4;
+  }
+
+  /* Table shells scroll horizontally on their own so the page body never does. */
+  .table-scroll {
+    @apply -mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0;
+  }
+}
+
+@layer utilities {
+  .tap-target {
+    min-height: var(--tap-target);
+    min-width: var(--tap-target);
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* Screen-reader-only, matching the standard clip pattern. */
+  .sr-only-focusable:not(:focus):not(:focus-within) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+
+  /* Hide scrollbars on horizontal chip rows without disabling scrolling. */
+  .no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Print: care reports and invoices get printed and taken to appointments. */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+  }
+  a[href]::after {
+    content: '';
+  }
+}
