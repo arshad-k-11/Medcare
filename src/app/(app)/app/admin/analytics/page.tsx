@@ -11,7 +11,7 @@ import {
   Table,
   Td,
 } from '@/components/ui';
-import { BarSeries, DonutSplit, LineTrend } from '@/components/charts';
+import { BarSeries, DonutSplit } from '@/components/charts';
 import { requirePageUser } from '@/lib/auth-guard';
 import {
   acquisitionTrend,

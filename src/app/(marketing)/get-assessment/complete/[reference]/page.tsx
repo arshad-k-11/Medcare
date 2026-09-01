@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { CheckCircle2, Copy } from 'lucide-react';
+import { CheckCircle2 } from 'lucide-react';
 import { Alert, Badge, ButtonLink, Card, DescriptionList } from '@/components/ui';
 import { prisma } from '@/lib/db';
 import { URGENCY_LABELS, label } from '@/lib/constants';

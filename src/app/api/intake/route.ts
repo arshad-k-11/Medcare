@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db';
-import { ApiError, created, enforceRateLimit, handler, parseBody } from '@/lib/api';
+import { created, enforceRateLimit, handler, parseBody } from '@/lib/api';
 import { intakeSubmissionSchema } from '@/lib/validation/intake';
 import { recommendPackage, firstContactSlaHours } from '@/lib/services/recommendation';
 import { notify, notifyInternal } from '@/lib/integrations/notifications';

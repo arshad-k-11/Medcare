@@ -41,12 +41,10 @@ import {
   assignmentStatus,
   carePlanStatus,
   incidentStatus,
-  reminderStatus,
   seniorStatus,
   severity as severityDisplay,
   visitStatus,
-  vitalFlag,
-} from '@/lib/status';
+  } from '@/lib/status';
 
 export const metadata: Metadata = {
   title: 'Patient record',

@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { Badge, ButtonLink, Card, DescriptionList, SectionHeading } from '@/components/ui';
+import { Badge, ButtonLink, Card, DescriptionList } from '@/components/ui';
 import { CtaBand, EmergencyNotice } from '@/components/marketing/site-chrome';
 import { PriceFrom, SectionShell } from '@/components/marketing/sections';
 import { prisma } from '@/lib/db';

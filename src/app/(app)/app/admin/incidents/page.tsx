@@ -1,10 +1,10 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { Badge, Card, CardHeader, EmptyState, PageHeader, StatusPill, Table, Td } from '@/components/ui';
+import { Badge, Card, EmptyState, PageHeader, StatusPill } from '@/components/ui';
 import { IncidentActions } from '@/components/nurse/incident-actions';
 import { requirePageUser } from '@/lib/auth-guard';
 import { prisma } from '@/lib/db';
-import { formatDateTime, formatName, relativeTime } from '@/lib/format';
+import { formatName, relativeTime } from '@/lib/format';
 import { incidentStatus, severity as severityDisplay } from '@/lib/status';
 import { INCIDENT_TYPE_LABELS, label, titleise } from '@/lib/constants';
 

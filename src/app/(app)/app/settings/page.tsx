@@ -4,7 +4,7 @@ import { NotificationPreferences } from '@/components/app-shell/notification-pre
 import { requirePageUser } from '@/lib/auth-guard';
 import { prisma } from '@/lib/db';
 import { channelStatus } from '@/lib/integrations/notifications';
-import { CHANNELS, CHANNEL_LABELS, NOTIFICATION_TYPES, NOTIFICATION_TYPE_LABELS, ROLE_LABELS, label } from '@/lib/constants';
+import { CHANNEL_LABELS, NOTIFICATION_TYPES, NOTIFICATION_TYPE_LABELS, ROLE_LABELS, label } from '@/lib/constants';
 import { formatPhone } from '@/lib/format';
 
 export const metadata: Metadata = {

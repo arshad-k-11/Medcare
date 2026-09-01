@@ -27,7 +27,7 @@ const listQuery = paginationQuery.extend({
 
 /** GET /api/feedback — ops view of ratings and complaints. */
 export const GET = handler(async (request) => {
-  const user = await requireCapability('feedback:manage');
+  await requireCapability('feedback:manage');
   const query = parseQuery(request, listQuery);
   const { page, pageSize, skip, take } = pagination(query);
 

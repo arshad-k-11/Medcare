@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { Alert, Card, CardHeader, EmptyState, PageHeader, Table, Td } from '@/components/ui';
+import { Card, CardHeader, EmptyState, PageHeader, Table, Td } from '@/components/ui';
 import { DocumentUpload } from '@/components/family/document-upload';
 import { SeniorSwitcher } from '@/components/family/senior-switcher';
 import { requirePageUser } from '@/lib/auth-guard';

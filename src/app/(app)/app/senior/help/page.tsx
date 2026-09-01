@@ -36,7 +36,6 @@ export default async function SeniorHelpPage() {
     },
   });
 
-  const firstName = (name: string) => name.split(' ')[0];
   const familyContact = senior?.familyLinks[0]?.familyProfile.user;
   const supportPhone = process.env.NEXT_PUBLIC_SUPPORT_PHONE;
 

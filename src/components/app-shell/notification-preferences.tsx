@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Alert, Button, Card, CardHeader } from '@/components/ui';
+import { Button, Card, CardHeader } from '@/components/ui';
 import { cn } from '@/lib/utils';
 
 type Preference = { type: string; channel: string; enabled: boolean };

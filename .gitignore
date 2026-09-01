@@ -17,3 +17,5 @@ public/uploads/*
 .vercel
 tsconfig.tsbuildinfo
 next-env.d.ts
+private-uploads
+prisma/demo.db

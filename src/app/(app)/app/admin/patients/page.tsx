@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { Badge, Card, CardHeader, EmptyState, PageHeader, Pagination, StatusPill, Table, Td } from '@/components/ui';
+import { Badge, Card, EmptyState, PageHeader, Pagination, StatusPill, Table, Td } from '@/components/ui';
 import { requirePageUser } from '@/lib/auth-guard';
 import { prisma } from '@/lib/db';
 import { formatDate, formatName } from '@/lib/format';

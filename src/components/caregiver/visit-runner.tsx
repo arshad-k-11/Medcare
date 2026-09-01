@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Check, LogIn, LogOut, MapPin, Pill, TriangleAlert, X } from 'lucide-react';
+import { Check, LogIn, LogOut, Pill, X } from 'lucide-react';
 import {
   Alert,
   Button,

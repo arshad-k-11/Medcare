@@ -2,12 +2,10 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import {
   Alert,
-  Badge,
   Card,
   CardHeader,
   EmptyState,
   PageHeader,
-  Select,
   StatusPill,
   Table,
   Td,
@@ -17,7 +15,7 @@ import { SeniorPicker } from '@/components/admin/senior-picker';
 import { requirePageUser } from '@/lib/auth-guard';
 import { prisma } from '@/lib/db';
 import { formatDate, formatName } from '@/lib/format';
-import { assignmentStatus, verificationStatus } from '@/lib/status';
+import { verificationStatus } from '@/lib/status';
 import { SHIFT_PATTERN_LABELS, label } from '@/lib/constants';
 
 export const metadata: Metadata = {

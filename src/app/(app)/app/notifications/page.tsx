@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { Badge, Card, CardHeader, EmptyState, PageHeader } from '@/components/ui';
+import { Badge, Card, EmptyState, PageHeader } from '@/components/ui';
 import { MarkAllRead } from '@/components/app-shell/mark-all-read';
 import { requirePageUser } from '@/lib/auth-guard';
 import { prisma } from '@/lib/db';

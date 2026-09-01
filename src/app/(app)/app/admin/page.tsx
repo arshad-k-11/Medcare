@@ -18,7 +18,7 @@ import { requirePageUser } from '@/lib/auth-guard';
 import { prisma } from '@/lib/db';
 import { adminKpis, periodFromDays } from '@/lib/queries/analytics';
 import { formatCompactMoney, formatDateTime, formatName, relativeTime } from '@/lib/format';
-import { leadStatus, urgency as urgencyDisplay, severity as severityDisplay } from '@/lib/status';
+import { urgency as urgencyDisplay, severity as severityDisplay } from '@/lib/status';
 import { firstContactSlaHours } from '@/lib/services/recommendation';
 import type { Urgency } from '@/lib/constants';
 

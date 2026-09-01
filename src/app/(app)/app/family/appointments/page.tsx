@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { CalendarDays, Car, UserRound } from 'lucide-react';
+import { Car, UserRound } from 'lucide-react';
 import {
   Badge,
   Card,
@@ -16,7 +16,7 @@ import { requirePageUser } from '@/lib/auth-guard';
 import { resolveSelectedSenior } from '@/lib/queries/family';
 import { prisma } from '@/lib/db';
 import { formatDateTime, formatDuration, formatInTimezone, formatName } from '@/lib/format';
-import { APPOINTMENT_STATUSES, VISIT_KIND_LABELS, label, titleise } from '@/lib/constants';
+import { VISIT_KIND_LABELS, label, titleise } from '@/lib/constants';
 import { visitStatus } from '@/lib/status';
 
 export const metadata: Metadata = {

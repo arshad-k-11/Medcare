@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
 import { Alert, Button, Card, Checkbox, Field, Input, Select, Textarea } from '@/components/ui';
 import { PARTNER_TYPES, PARTNER_TYPE_LABELS, label } from '@/lib/constants';
@@ -182,9 +183,9 @@ export function PartnerRegistrationForm({ areas }: { areas: { id: string; name: 
 
         <p className="text-xs leading-relaxed text-ink-500">
           We use these details to contact you about the partnership. Read our{' '}
-          <a href="/legal/privacy" className="font-medium text-brand-700 hover:underline">
+          <Link href="/legal/privacy" className="font-medium text-brand-700 hover:underline">
             privacy notice
-          </a>
+          </Link>
           .
         </p>
       </form>

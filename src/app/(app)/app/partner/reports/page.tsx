@@ -4,7 +4,7 @@ import { BarSeries, DonutSplit } from '@/components/charts';
 import { requirePageUser } from '@/lib/auth-guard';
 import { prisma } from '@/lib/db';
 import { formatMonthLabel } from '@/lib/format-extra';
-import { REFERRAL_STATUS_LABELS, label, titleise } from '@/lib/constants';
+import { REFERRAL_STATUS_LABELS, label } from '@/lib/constants';
 
 export const metadata: Metadata = {
   title: 'Referral reports',

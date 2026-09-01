@@ -30,7 +30,7 @@ export default function AboutPage() {
           </p>
           <p>
             We started with the boring part rather than the emotional part: what a care plan should
-            contain, who reviews the caregiver's notes, how quickly a missed visit becomes somebody's
+            contain, who reviews the caregiver&rsquo;s notes, how quickly a missed visit becomes somebody&rsquo;s
             problem, and how a daughter in Toronto finds out what happened on a Tuesday morning in
             Powai. Those are operational questions, and answering them properly is what separates
             coordinated care from an introduction service.

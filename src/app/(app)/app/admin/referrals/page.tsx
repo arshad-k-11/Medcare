@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { Badge, Card, CardHeader, EmptyState, PageHeader, Stat, StatusPill, Table, Td } from '@/components/ui';
+import { Badge, Card, CardHeader, EmptyState, PageHeader, Stat, StatusPill } from '@/components/ui';
 import { ReferralActions } from '@/components/admin/referral-actions';
 import { requirePageUser } from '@/lib/auth-guard';
 import { prisma } from '@/lib/db';

@@ -4,7 +4,6 @@ import { Badge, Card, SectionHeading, Table, Td } from '@/components/ui';
 import { CtaBand } from '@/components/marketing/site-chrome';
 import { PackageCard, PriceFrom, SectionShell } from '@/components/marketing/sections';
 import { prisma } from '@/lib/db';
-import { readList } from '@/lib/json-list';
 import { FREQUENCY_LABELS, SERVICE_CLASS_LABELS, label } from '@/lib/constants';
 
 export const metadata: Metadata = {

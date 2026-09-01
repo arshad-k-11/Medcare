@@ -4,7 +4,7 @@ import { requirePageUser } from '@/lib/auth-guard';
 import { prisma } from '@/lib/db';
 import { formatDate, formatDateTime } from '@/lib/format';
 import { referralStatus, urgency as urgencyDisplay } from '@/lib/status';
-import { REFERRAL_STATUSES, titleise } from '@/lib/constants';
+import { REFERRAL_STATUSES } from '@/lib/constants';
 
 export const metadata: Metadata = {
   title: 'My referrals',

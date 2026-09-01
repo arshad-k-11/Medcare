@@ -1,8 +1,6 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 import {
   Alert,
-  Badge,
   ButtonLink,
   Card,
   CardHeader,
@@ -13,9 +11,9 @@ import {
 } from '@/components/ui';
 import { requirePageUser } from '@/lib/auth-guard';
 import { prisma } from '@/lib/db';
-import { formatDate, formatDateTime, relativeTime } from '@/lib/format';
+import { formatDateTime, relativeTime } from '@/lib/format';
 import { referralStatus } from '@/lib/status';
-import { PARTNER_TYPE_LABELS, label, titleise } from '@/lib/constants';
+import { PARTNER_TYPE_LABELS, label } from '@/lib/constants';
 
 export const metadata: Metadata = {
   title: 'Partner dashboard',

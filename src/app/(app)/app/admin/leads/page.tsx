@@ -18,7 +18,6 @@ import { leadFunnel, periodFromDays } from '@/lib/queries/analytics';
 import { formatDate, relativeTime } from '@/lib/format';
 import { leadStatus, urgency as urgencyDisplay } from '@/lib/status';
 import {
-  BUDGET_BAND_LABELS,
   JOURNEY_LABELS,
   LEAD_PIPELINE,
   LEAD_STATUSES,

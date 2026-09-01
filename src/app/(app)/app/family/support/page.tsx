@@ -4,7 +4,7 @@ import { Phone, Mail } from 'lucide-react';
 import { SupportRequestForm } from '@/components/family/support-request-form';
 import { requirePageUser } from '@/lib/auth-guard';
 import { resolveSelectedSenior } from '@/lib/queries/family';
-import { formatName, formatPhone } from '@/lib/format';
+import { formatName } from '@/lib/format';
 import { prisma } from '@/lib/db';
 
 export const metadata: Metadata = {
