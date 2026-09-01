@@ -73,12 +73,22 @@ export function noContent(): NextResponse {
   return new NextResponse(null, { status: 204 });
 }
 
+/** Route context shape for dynamic segments, e.g. `RouteContext<{ id: string }>`. */
+export type RouteContext<P extends Record<string, string> = Record<string, never>> = {
+  params: Promise<P>;
+};
+
 /**
  * Wraps a handler so thrown ApiErrors and zod failures become the standard envelope and
  * unexpected errors never leak a stack trace or a database message to the client.
+ *
+ * Generic over the route context so a dynamic route can declare its params:
+ *   `handler<RouteContext<{ id: string }>>(async (request, { params }) => …)`
  */
-export function handler(fn: (request: Request, context: never) => Promise<NextResponse>) {
-  return async (request: Request, context: never): Promise<NextResponse> => {
+export function handler<C = unknown>(
+  fn: (request: Request, context: C) => Promise<NextResponse>,
+) {
+  return async (request: Request, context: C): Promise<NextResponse> => {
     try {
       return await fn(request, context);
     } catch (error) {
