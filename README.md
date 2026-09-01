@@ -19,25 +19,35 @@ API design, component structure, design system, security model, roadmap) is in
 
 ## Quick start
 
-Requirements: **Node 20+** and npm. No database server needed for the demo.
+Requirements: **Node 20+** and npm. No database server, and nothing to configure by hand.
+Works the same on macOS, Linux, and Windows (PowerShell, CMD or Git Bash).
 
 ```bash
 npm install
-cp .env.example .env
-
-# Generate a session secret and put it in .env as AUTH_SECRET
-openssl rand -base64 48
-
-npm run demo:sqlite     # creates prisma/dev.db, applies the schema, seeds demo data
-# copy the DATABASE_URL it prints into .env
-
+npm run demo:sqlite     # creates prisma/dev.db, seeds demo data, and writes .env for you
 npm run dev             # http://localhost:3000
 ```
 
-`npm run demo:sqlite` exists because production targets PostgreSQL but a reviewer's laptop
-usually has no Postgres running. `prisma/schema.prisma` stays on `postgresql`;
-`scripts/schema-for-env.mjs` derives a SQLite copy at run time by swapping **only** the
-provider line, so the two cannot drift.
+Sign in with `admin@medcare.demo` and the password `Demo@12345`. The full account list is
+under [Demo credentials](#demo-credentials).
+
+`npm run demo:sqlite` writes `DATABASE_URL` and a freshly generated `AUTH_SECRET` into
+`.env`, creating the file from `.env.example` if it does not exist. **It never overwrites a
+value you have already set**, so if `.env` already points at your own database it is left
+alone and the script says so.
+
+It exists because production targets PostgreSQL but a reviewer's laptop usually has no
+Postgres running. `prisma/schema.prisma` stays on `postgresql`; `scripts/schema-for-env.mjs`
+derives a SQLite copy at run time by swapping **only** the provider line, so the two cannot
+drift.
+
+### If you see `Environment variable not found: DATABASE_URL`
+
+`npm run dev` was started before the database was set up. Run `npm run demo:sqlite` (or
+point `DATABASE_URL` at your own PostgreSQL instance) and start the server again. Next.js
+reads `.env` once at boot, so an `.env` created while the server is running will not be
+picked up until you restart it — it prints `- Environments: .env` on startup when it has
+found the file.
 
 ### Running against PostgreSQL
 
@@ -63,14 +73,15 @@ npm run build && npm start
 | `npm run db:push` | Push the schema without a migration |
 | `npm run db:seed` | Seed demo data into whatever `DATABASE_URL` points at |
 | `npm run db:studio` | Prisma Studio |
-| `npm run demo:sqlite` | One command: derive SQLite schema, push, generate, seed |
+| `npm run demo:sqlite` | One command: derive SQLite schema, push, generate, write `.env`, seed |
 
 ---
 
 ## Environment variables
 
-Copy `.env.example` to `.env`. Nothing here ships with a value that would work against a
-real provider — there are **no placeholder API keys in the repository**, and every
+`npm run demo:sqlite` writes the two required variables for you. To configure anything else,
+copy `.env.example` to `.env` and edit it. Nothing here ships with a value that would work
+against a real provider — there are **no placeholder API keys in the repository**, and every
 integration is written to degrade honestly when it is unconfigured rather than to pretend
 it worked.
 
@@ -78,8 +89,8 @@ it worked.
 
 | Variable | Notes |
 | --- | --- |
-| `DATABASE_URL` | PostgreSQL in production; `file:…` for the SQLite demo |
-| `AUTH_SECRET` | Session signing key, at least 32 characters. `openssl rand -base64 48`. Anything touching a session throws without it, so sign-in fails loudly rather than silently accepting an unsigned token |
+| `DATABASE_URL` | PostgreSQL in production; `file:…` for the SQLite demo. On Windows the demo writes it with forward slashes (`file:C:/dev/Medcare/prisma/dev.db`) — Prisma will not parse a backslash path |
+| `AUTH_SECRET` | Session signing key, at least 32 characters. Generated for you by `npm run demo:sqlite`; otherwise `openssl rand -base64 48`. Anything touching a session throws without it, so sign-in fails loudly rather than silently accepting an unsigned token |
 | `NEXT_PUBLIC_APP_URL` | Absolute origin, used for links in notifications and canonical URLs |
 
 ### Optional, with sane defaults
