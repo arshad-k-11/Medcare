@@ -102,7 +102,7 @@ it worked.
 | `NEXT_PUBLIC_SITE_NAME` | `Medcare` | Brand name shown throughout |
 | `NEXT_PUBLIC_SUPPORT_PHONE` / `_EMAIL` | placeholder | Shown on public pages — **replace before launch** |
 | `SMS_ENABLED` / `EMAIL_ENABLED` / `WHATSAPP_ENABLED` | `false` | When false, OTPs and notifications are written to the server log and recorded as `SKIPPED` with a reason, never as "sent" |
-| `STORAGE_DRIVER` | `local` | `local` writes to `./private-uploads`, which is never web-served. `s3` needs a **private** bucket |
+| `STORAGE_DRIVER` | `local` | `local` writes to `./private-uploads`, which is never web-served. **`s3` is a stub that throws — see the document-storage limitation below.** Leave this as `local` |
 
 ### Not configured out of the box
 
@@ -231,7 +231,16 @@ unpooled URL exhausts a small Postgres in minutes.
    ```
 
 2. **Set environment variables** in Vercel → Settings → Environment Variables, for
-   Production *and* Preview:
+   Production *and* Preview.
+
+   **Only three are required. Do not add the others with blank values.** Vercel's form
+   prefills a row per key in `.env.example`; saving one with an empty value sets the
+   variable to an empty string, which is *not* the same as leaving it unset. That is
+   exactly what produces `DATABASE_URL resolved to an empty string` at build time. Delete
+   every row you are not filling in — the code already has correct defaults for all of
+   them.
+
+   The three required ones:
 
    | Variable | Value |
    | --- | --- |
@@ -307,9 +316,9 @@ the latest branch.
    production.**
 7. Serve over HTTPS only. Session cookies are marked Secure, so authentication will not work
    over plain HTTP outside localhost.
-8. Configure `STORAGE_DRIVER=s3` with a **private** bucket. Document downloads are proxied
-   through the application so that authorisation and audit still apply; the bucket must not be
-   publicly readable.
+8. **Document upload will not work yet.** Neither driver is production-usable: `local`
+   writes to the local filesystem, and `s3` is an unimplemented stub that throws. See the
+   document-storage limitation below before you let anyone upload a care document.
 9. Before going live, have the legal documents reviewed, replace the support phone and email,
    and decide the real data-retention period.
 
@@ -329,23 +338,31 @@ projects usually go wrong.
    places that need real tests first.
 3. **Notifications are logged, not delivered,** until a provider is configured. Delivery is
    recorded as `SKIPPED` with a reason, so nothing claims to have been sent when it was not.
-4. **Payments are not live.** The Razorpay adapter creates orders and verifies webhook
+4. **Document storage has no production driver.** `StorageDriver` has two
+   implementations and neither is deployable: `local` writes to `./private-uploads` on the
+   application's own filesystem, which on Vercel or any serverless host is ephemeral and
+   read-only, and `s3` is a deliberate stub that throws rather than silently no-op a write.
+   So `POST /api/documents` fails at runtime on a serverless deployment. Implementing the
+   S3 driver against a **private** bucket is the smallest piece of work standing between
+   this and handling real care documents. Reads are already proxied through the application
+   so that authorisation and audit apply, so the bucket must never be publicly readable.
+5. **Payments are not live.** The Razorpay adapter creates orders and verifies webhook
    signatures, but has never run against a real key. Webhook idempotency needs a load test
    before it handles money.
-5. **Legal, consent and privacy content is a draft** awaiting professional review. So are the
+6. **Legal, consent and privacy content is a draft** awaiting professional review. So are the
    consent-capture flows: the model records *who* consented, *when* and *to what version*, but
    the wording itself is not yet approved.
-6. **Vital thresholds are seeded with commonly-used ranges,** configurable per senior. They
+7. **Vital thresholds are seeded with commonly-used ranges,** configurable per senior. They
    are operational review triggers chosen by the business, not clinical guidance, and they
    should be signed off by the supervising clinician before launch.
-7. **Caregiver location on check-in is optional and advisory.** It never blocks a check-in —
+8. **Caregiver location on check-in is optional and advisory.** It never blocks a check-in —
    a caregiver standing outside a building with poor GPS must still be able to start work —
    so `locationVerified` is a signal for ops, not proof of attendance.
-8. **English only.** The interface is written for Mumbai but not yet translated to Hindi or
+9. **English only.** The interface is written for Mumbai but not yet translated to Hindi or
    Marathi, which real caregivers and many seniors would need. Strings are not yet extracted.
-9. **No offline mode for caregivers.** The mobile caregiver surface assumes connectivity at
+10. **No offline mode for caregivers.** The mobile caregiver surface assumes connectivity at
    check-in and check-out.
-10. **Analytics are computed on read.** Fine at demo volume; the dashboard queries will need
+11. **Analytics are computed on read.** Fine at demo volume; the dashboard queries will need
     materialised summaries once there are years of visits.
 
 ---
