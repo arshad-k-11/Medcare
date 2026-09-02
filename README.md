@@ -72,6 +72,7 @@ npm run build && npm start
 | `npm run db:migrate` | Prisma migration (development) |
 | `npm run db:push` | Push the schema without a migration |
 | `npm run db:seed` | Seed demo data into whatever `DATABASE_URL` points at |
+| `npm run db:bootstrap` | Production setup: business configuration plus one real admin, no demo people |
 | `npm run db:studio` | Prisma Studio |
 | `npm run demo:sqlite` | One command: derive SQLite schema, push, generate, write `.env`, seed |
 
@@ -257,8 +258,33 @@ unpooled URL exhausts a small Postgres in minutes.
 4. **Deploy.** Vercel detects Next.js and runs `npm run build`, which generates the Prisma
    client first. No custom build command is needed.
 
-5. **Create the first administrator** directly in the database. Do not run the demo seed
-   against production — see the warning under [Demo credentials](#demo-credentials).
+5. **Bootstrap the database.** A freshly migrated database is empty: no care packages, no
+   service areas, and nobody who can sign in to create them. Run this once, against the
+   production database, with your own values:
+
+   ```bash
+   DATABASE_URL="<your connection string>" \
+   ADMIN_EMAIL="you@yourdomain.com" \
+   ADMIN_NAME="Your Name" \
+   ADMIN_PASSWORD='a long passphrase' \
+   npm run db:bootstrap
+   ```
+
+   It seeds only the business configuration — packages, services, service areas, task and
+   assessment templates, vital thresholds, escalation rules, notification templates,
+   settings — and creates one real administrator. **No demo people, and no shared demo
+   password.** The password is hashed with bcrypt and never written to a file or logged.
+
+   It never deletes anything, and it skips the catalogue if packages already exist and the
+   admin if that email already exists, so running it twice cannot damage live data. If it
+   finds any `@medcare.demo` accounts it warns you to delete them.
+
+   Do **not** run `npm run db:seed` against production — see the warning under
+   [Demo credentials](#demo-credentials).
+
+   Everything it seeds is a starting point from this repository, not your commercial
+   decision: review the packages, prices and service areas in the admin console, and have
+   the vital thresholds signed off by your supervising clinician.
 
 The build no longer requires a reachable database. `generateStaticParams` for the package
 pages and the sitemap's package entries both degrade to "render on demand" if the database
@@ -276,8 +302,9 @@ the latest branch.
 3. Set `NEXT_PUBLIC_APP_URL` to the real origin.
 4. Run `npx prisma migrate deploy`.
 5. `npm run build && npm start`.
-6. Create the first administrator directly in the database or through a one-off script. **Do
-   not run the demo seed in production.**
+6. Bootstrap the catalogue and first administrator with `npm run db:bootstrap` (see the
+   Vercel section above for the required `ADMIN_*` variables). **Do not run the demo seed in
+   production.**
 7. Serve over HTTPS only. Session cookies are marked Secure, so authentication will not work
    over plain HTTP outside localhost.
 8. Configure `STORAGE_DRIVER=s3` with a **private** bucket. Document downloads are proxied
