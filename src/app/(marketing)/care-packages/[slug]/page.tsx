@@ -11,12 +11,31 @@ import { breadcrumbSchema, packageSchema } from '@/lib/seo';
 
 export const revalidate = 300;
 
+/**
+ * Prerenders a page per published package when a database is reachable at build time.
+ *
+ * The database is a *runtime* dependency, not a build dependency: a CI or Vercel build
+ * runs before the connection string exists, or from a network that cannot reach the
+ * database, and failing the whole deployment over a prerender optimisation is the wrong
+ * trade. Returning an empty list simply means each package page is rendered on first
+ * request instead, which is what `revalidate` above already allows for.
+ *
+ * A genuinely missing DATABASE_URL still fails loudly — at request time, on the page that
+ * needs it, rather than by breaking the build of every other page too.
+ */
 export async function generateStaticParams() {
-  const packages = await prisma.carePackage.findMany({
-    where: { isPublished: true },
-    select: { slug: true },
-  });
-  return packages.map((pkg) => ({ slug: pkg.slug }));
+  try {
+    const packages = await prisma.carePackage.findMany({
+      where: { isPublished: true },
+      select: { slug: true },
+    });
+    return packages.map((pkg) => ({ slug: pkg.slug }));
+  } catch {
+    console.warn(
+      '[build] Could not reach the database to prerender package pages. They will be rendered on demand.',
+    );
+    return [];
+  }
 }
 
 export async function generateMetadata({

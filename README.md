@@ -215,6 +215,62 @@ Detail is in `docs/ARCHITECTURE.md`; the short version:
 The app is a standard Next.js 15 App Router application and runs anywhere Node 20 does —
 Vercel, a container, or a VM behind nginx.
 
+### Deploying to Vercel
+
+The app needs a PostgreSQL database that exists **before** the first deploy, and it needs a
+*pooled* connection string. Serverless functions each open their own connection, so an
+unpooled URL exhausts a small Postgres in minutes.
+
+1. **Create a database.** Vercel Postgres, Neon and Supabase all work. Copy the **pooled**
+   connection string (Neon calls it the pooler endpoint; Supabase calls it the connection
+   pooler on port 6543). For Neon or Supabase append the pooling parameters:
+
+   ```
+   postgresql://USER:PASS@HOST/DB?sslmode=require&pgbouncer=true&connection_limit=1
+   ```
+
+2. **Set environment variables** in Vercel → Settings → Environment Variables, for
+   Production *and* Preview:
+
+   | Variable | Value |
+   | --- | --- |
+   | `DATABASE_URL` | the pooled connection string from step 1 |
+   | `AUTH_SECRET` | `node -e "console.log(require('crypto').randomBytes(48).toString('base64'))"` |
+   | `NEXT_PUBLIC_APP_URL` | `https://your-project.vercel.app` (or your custom domain) |
+
+   Use a **different** `AUTH_SECRET` for Preview than for Production — a shared secret means
+   a preview deployment can mint sessions valid on the live site.
+
+3. **Create the tables**, once, from your machine, against that database:
+
+   ```bash
+   DATABASE_URL="<your unpooled/direct connection string>" npx prisma migrate deploy
+   ```
+
+   Use the **direct** (non-pooled) URL here — schema migrations through a transaction pooler
+   fail. `prisma/migrations/0_init` is the baseline migration for the whole schema.
+
+   Migrations are deliberately **not** run automatically during `npm run build`. On a care
+   platform a schema change should be a decision someone makes, not a side effect of pushing
+   a branch.
+
+4. **Deploy.** Vercel detects Next.js and runs `npm run build`, which generates the Prisma
+   client first. No custom build command is needed.
+
+5. **Create the first administrator** directly in the database. Do not run the demo seed
+   against production — see the warning under [Demo credentials](#demo-credentials).
+
+The build no longer requires a reachable database. `generateStaticParams` for the package
+pages and the sitemap's package entries both degrade to "render on demand" if the database
+cannot be reached at build time, so a deploy that runs before the database is provisioned
+still succeeds — and then fails visibly at request time, which is the correct place to fail.
+
+If the build stops with `Failed to collect page data` and
+`DATABASE_URL resolved to an empty string`, you are on a commit from before that fix; pull
+the latest branch.
+
+### Any other host
+
 1. Provision **PostgreSQL** and set `DATABASE_URL`.
 2. Set `AUTH_SECRET` to a freshly generated value, unique per environment.
 3. Set `NEXT_PUBLIC_APP_URL` to the real origin.
@@ -238,7 +294,9 @@ Stated plainly, because the gap between "demo-complete" and "production-ready" i
 projects usually go wrong.
 
 1. **Rate limiting is in-memory.** It is correct for a single instance and useless behind a
-   load balancer. The store is an interface — point it at Redis before scaling out.
+   load balancer or on serverless, where every function instance keeps its own counter. The
+   store is an interface — point it at Redis before scaling out, and treat the limits as
+   advisory on Vercel until you do.
 2. **No automated test suite.** The build, strict typecheck and zod schemas catch a lot; they
    are not tests. Intake, matching, vitals flagging and the RBAC/scope layer are the four
    places that need real tests first.
